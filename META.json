@@ -43,6 +43,20 @@
       }
    },
    "release_status" : "stable",
-   "version" : "0.01"
+   "resources" : {
+      "bugtracker" : {
+         "web" : "https://github.com/nichtich/File-Hotfolder/issues"
+      },
+      "homepage" : "https://github.com/nichtich/File-Hotfolder",
+      "repository" : {
+         "type" : "git",
+         "url" : "https://github.com/nichtich/File-Hotfolder.git",
+         "web" : "https://github.com/nichtich/File-Hotfolder"
+      }
+   },
+   "version" : "0.01",
+   "x_contributors" : [
+      "Jakob Voss <voss@gbv.de>"
+   ]
 }
 
