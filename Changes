@@ -1,6 +1,8 @@
 # Change file for File::Hotfolder
 
 {{$NEXT}}
+
+0.03  2015-03-24 14:34:48 CET
     - fixed filter option
     - new option: catch
 
