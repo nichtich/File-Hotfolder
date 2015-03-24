@@ -1,6 +1,8 @@
 # Change file for File::Hotfolder
 
 {{$NEXT}}
+
+0.02  2015-03-24 12:29:01 CET
     - improved documentation and examples
     - new options: print, fullname, filter
 
