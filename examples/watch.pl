@@ -1,15 +1,13 @@
 use strict;
+use warnings;
+use v5.10;
 use File::Hotfolder;
-use File::Spec;
 
-my $root = @ARGV[0];
-
-my $hf = File::Hotfolder->new( 
-    watch => $root,
+# watch a given directory and print all new or modified files 
+File::Hotfolder->new( 
+    watch    => ($ARGV[0] // '.'),
     callback => sub {
         my $path = shift;
-        print File::Spec->abs2rel( $path, $root ) . "\n";
+        say $path;
     }
-);
-
-1 while $hf->poll;
+)->loop;

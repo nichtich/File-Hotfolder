@@ -38,7 +38,10 @@
       "runtime" : {
          "requires" : {
             "Linux::Inotify2" : "0",
-            "perl" : "v5.10.1"
+            "perl" : "v5.10.0"
+         },
+         "suggests" : {
+            "AnyEvent" : "0"
          }
       }
    },
@@ -54,7 +57,7 @@
          "web" : "https://github.com/nichtich/File-Hotfolder"
       }
    },
-   "version" : "0.01",
+   "version" : "0.02",
    "x_contributors" : [
       "Jakob Voss <voss@gbv.de>"
    ]

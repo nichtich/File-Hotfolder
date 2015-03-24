@@ -10,15 +10,22 @@ File::Hotfolder - recursive watch directory for new or modified files
 
 # SYNOPSIS
 
-    my $hf = File::Hotfolder->new(
-        watch    => '/my/input/path',
-        delete   => 1
+    use File::Hotfolder;
+
+    # object interface
+    File::Hotfolder->new(
+        watch    => '/some/directory',
         callback => sub { 
-            my $path = shift; # absolute path
+            my $path = shift;
             ...
-            return should_delete($path) ? 1 : 0;
         },
-    );
+    )->loop;
+
+    # function interface
+    watch( '/some/directory', callback => sub { say shift } )->loop;
+
+    # watch a given directory and delete all new or modified files
+    watch( $ARGV[0] // '.', delete  => 1, print => DELETE_FILE )->loop;
 
 # DESCRIPTION
 
@@ -44,27 +51,46 @@ be watched as well.
     Delete the modified file if a callback returned a true value (disabled by
     default).
 
-# EXAMPLE
+- fullname
 
-    use File::Hotfolder;
-    use File::Spec;
+    Return absolute path names (disabled by default).
 
-    my $root = @ARGV[0];
+- filter
 
-    my $hf = File::Hotfolder->new( 
-        watch => $root,
-        delete => 0,
-        callback => sub {
-            my $path = shift;
-            print File::Spec->abs2rel( $path, $root ) . "\n";
-        }
-    );
+    Filter filenames with regular expression before passing to callback.
 
-    1 while $hf->poll;
+- print
+
+    Print to STDOUT each new directory (`print & WATCH_DIR`), each file path
+    before callback execution (`print & FOUND_FILE`), and/or each deletion
+    (`print & DELETE_FILE`).
+
+- scan
+
+    First call the callback for all existing files. This does not guarantee that
+    found files have been closed.
+
+# METHODS
+
+## loop
+
+Watch with a manual event loop. This method never returns.
+
+## anyevent
+
+Watch with [AnyEvent](https://metacpan.org/pod/AnyEvent). Returns a new AnyEvent watch.
+
+## inotify
+
+Returns the internal [Linux::Inotify2](https://metacpan.org/pod/Linux::Inotify2) object.
 
 # SEE ALSO
 
 [File::ChangeNotify](https://metacpan.org/pod/File::ChangeNotify), [Filesys::Notify::Simple](https://metacpan.org/pod/Filesys::Notify::Simple), [AnyEvent::Inotify::Simple](https://metacpan.org/pod/AnyEvent::Inotify::Simple)
+
+[AnyEvent](https://metacpan.org/pod/AnyEvent)
+
+[rrr-server](https://metacpan.org/pod/rrr-server) from [File::Rsync::Mirror::Recent](https://metacpan.org/pod/File::Rsync::Mirror::Recent)
 
 # COPYRIGHT AND LICENSE
 

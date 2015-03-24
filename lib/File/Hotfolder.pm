@@ -3,26 +3,49 @@ use strict;
 use warnings;
 use v5.10;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Carp;
 use File::Find;
 use File::Spec;
 use Linux::Inotify2;
 
+use parent 'Exporter';
+our %EXPORT_TAGS = (print => [qw(WATCH_DIR FOUND_FILE DELETE_FILE)]);
+our @EXPORT = ('watch', @{$EXPORT_TAGS{'print'}});
+$EXPORT_TAGS{all} = \@EXPORT;
+
+use constant {
+    WATCH_DIR   => 1,
+    FOUND_FILE  => 2,
+    DELETE_FILE => 4
+};
+
+# function interface
+sub watch {
+    shift if $_[0] eq 'File::Hotfolder';
+    File::Hotfolder->new( @_ % 2 ? (watch => @_) : @_ );
+}
+
+# object interface
 sub new {
     my ($class, %args) = @_;
 
+    my $path = $args{watch} // ''; 
+    $path = File::Spec->rel2abs($path) if $args{fullname};
+    croak "Missing watch directory: $path" unless -d $path,
+
     my $self = bless { 
-        inotify  => (Linux::Inotify2->new()
+        inotify  => (Linux::Inotify2->new
                     or croak "Unable to create new inotify object: $!"),
-        source   => ($args{watch} && -d $args{watch} ? $args{watch}
-                    : croak "Missing watch directory: ".($args{watch} // '')),
-        callback => ($args{callback} || sub { }),
+        callback => ($args{callback} || sub { 1 }),
         delete   => !!$args{delete},
+        print    => 0+($args{print} || 0),
+        filter   => $args{filter},
+        scan     => $args{scan},
     }, $class;
 
-    $self->watch_recursive( $self->{source} );
+    $self->watch_recursive( $path );
 
     $self;
 }
@@ -30,53 +53,84 @@ sub new {
 sub watch_recursive {
     my ($self, $path) = @_;
 
-    $path = File::Spec->rel2abs($path);
-    find( sub {
-        return unless -d $_;
-        $self->watch($File::Find::name);
+    find({
+        no_chdir => 1, 
+        wanted => sub {
+            if (-d $_) {
+                $self->watch_directory($_);
+            } elsif( $self->{scan} ) {
+                # TODO: check if not open or modified (lsof or fuser)
+                $self->_callback($_);
+            }
+        },
     }, $path );
 }
 
-sub watch {
+sub watch_directory {
     my ($self, $path) = @_;
 
     unless (-d $path) {
         warn "missing watch directory: $path\n";
         return;
     }
+    
+    say "watching $path" if ($self->{print} & WATCH_DIR);
 
-    $self->{inotify}->watch( 
+    unless ( $self->inotify->watch( 
         $path, 
-        IN_CREATE | IN_CLOSE_WRITE | IN_MOVE | IN_DELETE, 
+        IN_CREATE | IN_CLOSE_WRITE | IN_MOVE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF, 
         sub {
             my $e = shift;
             my $path  = $e->fullname;
             
-            if (-d $path && ($e->IN_CREATE || $e->IN_MOVED_TO)) {
-                $path = File::Spec->rel2abs($path);
-            } elsif (-f $path && ($e->IN_CLOSE_WRITE || $e->IN_MOVED_TO)) {
-                if ( $self->{callback}->( $path ) ) {
-                    unlink $path if $self->{delete};
+            warn "event queue overflowed\n" if $e->IN_Q_OVERFLOW;
+            
+            if ( $e->IN_ISDIR ) {
+                if ( $e->IN_CREATE || $e->IN_MOVED_TO) {
+                    $self->watch_recursive($path);
+                } elsif ( $e->IN_DELETE_SELF || $e->IN_MOVE_SELF ) {
+                    say "unwatching $path" if ($self->{print} & WATCH_DIR);
+                    $e->w->cancel;
                 }
+            } elsif ( $e->IN_CLOSE_WRITE || $e->IN_MOVED_TO ) {
+                $self->_callback($path);
             }
+
         }
-    );
+    ) ) {
+        warn "watching $path failed: $!\n";
+    };
 }
 
-sub process_recursive {
+sub _callback {
     my ($self, $path) = @_;
 
-    find( sub {
-        return unless -f $_;
-        # TODO: check if not open or modified (lsof or fuser)
-        if ( $self->{callback}->($File::Find::name) ) {
+    if ($self->{filter} && $path =~ $self->{filter}) {
+        return;
+    }
+
+    say $path if ($self->{print} & FOUND_FILE);
+    if ( $self->{callback}->( $path ) ) {
+        if ( $self->{delete} ) {
+            say $path if ($self->{print} & DELETE_FILE); 
             unlink $path;
         }
-    }, $path );
+    }
 }
 
-sub poll {
-    $_[0]->{inotify}->poll;
+sub inotify {
+    $_[0]->{inotify};
+}
+
+sub loop {
+    1 while $_[0]->inotify->poll;
+}
+
+sub anyevent {
+    my $inotify = $_[0]->inotify;
+    AnyEvent->io (
+        fh => $inotify->fileno, poll => 'r', cb => sub { $inotify->poll }
+    );
 }
 
 1;
@@ -98,15 +152,22 @@ File::Hotfolder - recursive watch directory for new or modified files
 
 =head1 SYNOPSIS
 
-    my $hf = File::Hotfolder->new(
-        watch    => '/my/input/path',
-        delete   => 1
+    use File::Hotfolder;
+
+    # object interface
+    File::Hotfolder->new(
+        watch    => '/some/directory',
         callback => sub { 
-            my $path = shift; # absolute path
+            my $path = shift;
             ...
-            return should_delete($path) ? 1 : 0;
         },
-    );
+    )->loop;
+
+    # function interface
+    watch( '/some/directory', callback => sub { say shift } )->loop;
+
+    # watch a given directory and delete all new or modified files
+    watch( $ARGV[0] // '.', delete  => 1, print => DELETE_FILE )->loop;
 
 =head1 DESCRIPTION
 
@@ -134,29 +195,50 @@ write but after a file has been closed.
 Delete the modified file if a callback returned a true value (disabled by
 default).
 
+=item fullname
+
+Return absolute path names (disabled by default).
+
+=item filter
+
+Filter filenames with regular expression before passing to callback.
+
+=item print
+
+Print to STDOUT each new directory (C<< print & WATCH_DIR >>), each file path
+before callback execution (C<< print & FOUND_FILE >>), and/or each deletion
+(C<< print & DELETE_FILE >>).
+
+=item scan
+
+First call the callback for all existing files. This does not guarantee that
+found files have been closed.
+
+=cut
+
 =back
 
-=head1 EXAMPLE
+=head1 METHODS
 
-    use File::Hotfolder;
-    use File::Spec;
+=head2 loop
 
-    my $root = @ARGV[0];
+Watch with a manual event loop. This method never returns.
 
-    my $hf = File::Hotfolder->new( 
-        watch => $root,
-        delete => 0,
-        callback => sub {
-            my $path = shift;
-            print File::Spec->abs2rel( $path, $root ) . "\n";
-        }
-    );
+=head2 anyevent
 
-    1 while $hf->poll;
+Watch with L<AnyEvent>. Returns a new AnyEvent watch.
+
+=head2 inotify
+
+Returns the internal L<Linux::Inotify2> object.
 
 =head1 SEE ALSO
 
 L<File::ChangeNotify>, L<Filesys::Notify::Simple>, L<AnyEvent::Inotify::Simple>
+
+L<AnyEvent>
+
+L<rrr-server> from L<File::Rsync::Mirror::Recent>
 
 =head1 COPYRIGHT AND LICENSE
 
