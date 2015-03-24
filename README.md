@@ -14,11 +14,14 @@ File::Hotfolder - recursive watch directory for new or modified files
 
     # object interface
     File::Hotfolder->new(
-        watch    => '/some/directory',
-        callback => sub { 
+        watch    => '/some/directory',  # which directory to watch
+        callback => sub {               # what to do with each new/modified file
             my $path = shift;
             ...
         },
+        delete   => 1,                  # delete each file if callback returns true
+        filter   => qr/\.json$/,        # only watch selected files
+        print    => WATCH_DIR,          # show which directories are watched
     )->loop;
 
     # function interface
@@ -30,7 +33,7 @@ File::Hotfolder - recursive watch directory for new or modified files
 # DESCRIPTION
 
 This module uses [Linux::Inotify2](https://metacpan.org/pod/Linux::Inotify2) to recursively watch a directory for new or
-modified files. A callback is called on each file with its absolute path.
+modified files. A callback is called on each file with its path.
 
 Deletions and new subdirectories are not reported but new subdirectories will
 be watched as well.
@@ -61,9 +64,8 @@ be watched as well.
 
 - print
 
-    Print to STDOUT each new directory (`print & WATCH_DIR`), each file path
-    before callback execution (`print & FOUND_FILE`), and/or each deletion
-    (`print & DELETE_FILE`).
+    Print to STDOUT each new directory (`WATCH_DIR`), each file path before
+    callback execution (`FOUND_FILE`), and/or each deletion (`DELETE_FILE`).
 
 - scan
 
