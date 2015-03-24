@@ -1,6 +1,7 @@
 # Change file for File::Hotfolder
 
 {{$NEXT}}
+    - fixed filter option
 
 0.02  2015-03-24 12:29:01 CET
     - improved documentation and examples

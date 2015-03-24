@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use v5.10;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Carp;
 use File::Find;
@@ -105,7 +105,7 @@ sub watch_directory {
 sub _callback {
     my ($self, $path) = @_;
 
-    if ($self->{filter} && $path =~ $self->{filter}) {
+    if ($self->{filter} && $path !~ $self->{filter}) {
         return;
     }
 
