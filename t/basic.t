@@ -29,9 +29,9 @@ my $hf = File::Hotfolder->new(
 $hf->inotify->blocking(0);
 
 sub touch($) {
-    my $f = new IO::File(shift, "w") || die "open: $!";
-    $f->print('1');
-    $f->close;
+    open(my $f, '>', shift) || die "open: $!";
+    print $f 1;
+    close($f);
 }
 
 touch "$dir/a";
