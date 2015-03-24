@@ -11,14 +11,15 @@ use File::Spec;
 use Linux::Inotify2;
 
 use parent 'Exporter';
-our %EXPORT_TAGS = (print => [qw(WATCH_DIR FOUND_FILE DELETE_FILE)]);
+our %EXPORT_TAGS = (print => [qw(WATCH_DIR FOUND_FILE DELETE_FILE CATCH_ERROR)]);
 our @EXPORT = ('watch', @{$EXPORT_TAGS{'print'}});
 $EXPORT_TAGS{all} = \@EXPORT;
 
 use constant {
     WATCH_DIR   => 1,
     FOUND_FILE  => 2,
-    DELETE_FILE => 4
+    DELETE_FILE => 4,
+    CATCH_ERROR => 8,
 };
 
 # function interface
@@ -43,7 +44,10 @@ sub new {
         print    => 0+($args{print} || 0),
         filter   => $args{filter},
         scan     => $args{scan},
+        catch    => $args{catch},
     }, $class;
+
+    $self->{catch} //= sub { } if ($self->{print} & CATCH_ERROR);
 
     $self->watch_recursive( $path );
 
@@ -110,11 +114,22 @@ sub _callback {
     }
 
     say $path if ($self->{print} & FOUND_FILE);
-    if ( $self->{callback}->( $path ) ) {
-        if ( $self->{delete} ) {
-            say $path if ($self->{print} & DELETE_FILE); 
-            unlink $path;
+    
+    my $delete;
+    if ($self->{catch}) {
+        $delete = eval { $self->{callback}->($path) };
+        if ($@) {
+            print "$path: $@" if $self->{print} & CATCH_ERROR;
+            $self->{catch}->($path, $@);
+            return;
         }
+    } else {
+        $delete = $self->{callback}->($path);
+    }
+
+    if ( $delete && $self->{delete} ) {
+        say $path if ($self->{print} & DELETE_FILE); 
+        unlink $path;
     }
 }
 
@@ -164,6 +179,10 @@ File::Hotfolder - recursive watch directory for new or modified files
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
         print    => WATCH_DIR,          # show which directories are watched
+        catch    => sub {               # catch callback errors
+            my ($path, $error) = @_;
+            ...
+        }
     )->loop;
 
     # function interface
@@ -210,6 +229,12 @@ Filter filenames with regular expression before passing to callback.
 
 Print to STDOUT each new directory (C<WATCH_DIR>), each file path before
 callback execution (C<FOUND_FILE>), and/or each deletion (C<DELETE_FILE>).
+Also use C<CATCH_ERROR> (implying C<catch>) to print callback errors.
+
+=item catch
+
+Error callback for failing callbacks. Disabled by default, so a dying callback
+will terminate the program.
 
 =item scan
 

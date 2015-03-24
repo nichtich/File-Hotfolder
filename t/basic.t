@@ -29,7 +29,7 @@ my $hf = File::Hotfolder->new(
 $hf->inotify->blocking(0);
 
 sub touch($) {
-    my $f = IO::File->new(shift, "w") || die "open: $!";
+    my $f = new IO::File(shift, "w") || die "open: $!";
     $f->print('1');
     $f->close;
 }

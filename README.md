@@ -22,6 +22,10 @@ File::Hotfolder - recursive watch directory for new or modified files
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
         print    => WATCH_DIR,          # show which directories are watched
+        catch    => sub {               # catch callback errors
+            my ($path, $error) = @_;
+            ...
+        }
     )->loop;
 
     # function interface
@@ -66,6 +70,12 @@ be watched as well.
 
     Print to STDOUT each new directory (`WATCH_DIR`), each file path before
     callback execution (`FOUND_FILE`), and/or each deletion (`DELETE_FILE`).
+    Also use `CATCH_ERROR` (implying `catch`) to print callback errors.
+
+- catch
+
+    Error callback for failing callbacks. Disabled by default, so a dying callback
+    will terminate the program.
 
 - scan
 
