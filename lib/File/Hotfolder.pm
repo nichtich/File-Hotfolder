@@ -3,23 +3,33 @@ use strict;
 use warnings;
 use v5.10;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use Carp;
 use File::Find;
 use File::Spec;
 use Linux::Inotify2;
+use Scalar::Util qw(blessed);
 
 use parent 'Exporter';
-our %EXPORT_TAGS = (print => [qw(WATCH_DIR FOUND_FILE DELETE_FILE CATCH_ERROR)]);
+our %EXPORT_TAGS = (print => [qw(
+        WATCH_DIR FOUND_FILE KEEP_FILE DELETE_FILE
+        CATCH_ERROR WATCH_ERROR HOTFOLDER_ERROR 
+        HOTFOLDER_ALL
+    )]);
 our @EXPORT = ('watch', @{$EXPORT_TAGS{'print'}});
 $EXPORT_TAGS{all} = \@EXPORT;
 
 use constant {
     WATCH_DIR   => 1,
-    FOUND_FILE  => 2,
-    DELETE_FILE => 4,
-    CATCH_ERROR => 8,
+    UNWATCH_DIR => 2,
+    FOUND_FILE  => 4,
+    KEEP_FILE   => 8,
+    DELETE_FILE => 16,    
+    CATCH_ERROR => 32,
+    WATCH_ERROR => 64,
+    HOTFOLDER_ALL => 128-1,
+    HOTFOLDER_ERROR => 32 | 64,
 };
 
 # function interface
@@ -44,14 +54,19 @@ sub new {
         print    => 0+($args{print} || 0),
         filter   => $args{filter},
         scan     => $args{scan},
-        catch    => $args{catch},
+        catch    => _build_catch($args{catch}),
+        logger   => _build_logger($args{logger}),
     }, $class;
-
-    $self->{catch} //= sub { } if ($self->{print} & CATCH_ERROR);
 
     $self->watch_recursive( $path );
 
     $self;
+}
+
+sub _build_catch {
+    my ($catch) = @_;
+    return $catch if ref $catch // '' eq 'CODE';
+    return $catch ? sub { } : undef;
 }
 
 sub watch_recursive {
@@ -61,7 +76,7 @@ sub watch_recursive {
         no_chdir => 1, 
         wanted => sub {
             if (-d $_) {
-                $self->watch_directory($_);
+                $self->_watch_directory($_);
             } elsif( $self->{scan} ) {
                 # TODO: check if not open or modified (lsof or fuser)
                 $self->_callback($_);
@@ -70,15 +85,10 @@ sub watch_recursive {
     }, $path );
 }
 
-sub watch_directory {
+sub _watch_directory {
     my ($self, $path) = @_;
 
-    unless (-d $path) {
-        warn "missing watch directory: $path\n";
-        return;
-    }
-    
-    say "watching $path" if ($self->{print} & WATCH_DIR);
+    $self->log( WATCH_DIR, $path ); 
 
     unless ( $self->inotify->watch( 
         $path, 
@@ -87,13 +97,15 @@ sub watch_directory {
             my $e = shift;
             my $path  = $e->fullname;
             
-            warn "event queue overflowed\n" if $e->IN_Q_OVERFLOW;
+            if ( $e->IN_Q_OVERFLOW ) {
+                $self->log( WATCH_ERROR, $path, "event queue overflowed" );
+            }
             
             if ( $e->IN_ISDIR ) {
                 if ( $e->IN_CREATE || $e->IN_MOVED_TO) {
                     $self->watch_recursive($path);
                 } elsif ( $e->IN_DELETE_SELF || $e->IN_MOVE_SELF ) {
-                    say "unwatching $path" if ($self->{print} & WATCH_DIR);
+                    $self->log( UNWATCH_DIR, $path );
                     $e->w->cancel;
                 }
             } elsif ( $e->IN_CLOSE_WRITE || $e->IN_MOVED_TO ) {
@@ -102,7 +114,7 @@ sub watch_directory {
 
         }
     ) ) {
-        warn "watching $path failed: $!\n";
+        $self->log( WATCH_ERROR, $path, "failed to create watch: $!" );
     };
 }
 
@@ -113,28 +125,26 @@ sub _callback {
         return;
     }
 
-    say $path if ($self->{print} & FOUND_FILE);
+    $self->log( FOUND_FILE, $path );
     
-    my $delete;
+    my $status;
     if ($self->{catch}) {
-        $delete = eval { $self->{callback}->($path) };
+        $status = eval { $self->{callback}->($path) };
         if ($@) {
-            print "$path: $@" if $self->{print} & CATCH_ERROR;
+            $self->log( CATCH_ERROR, $path, $@ );
             $self->{catch}->($path, $@);
             return;
         }
     } else {
-        $delete = $self->{callback}->($path);
+        $status = $self->{callback}->($path);
     }
 
-    if ( $delete && $self->{delete} ) {
-        say $path if ($self->{print} & DELETE_FILE); 
+    if ( $status && $self->{delete} ) {
         unlink $path;
+        $self->log( DELETE_FILE, $path );
+    } else {
+        $self->log( KEEP_FILE, $path );
     }
-}
-
-sub inotify {
-    $_[0]->{inotify};
 }
 
 sub loop {
@@ -146,6 +156,57 @@ sub anyevent {
     AnyEvent->io (
         fh => $inotify->fileno, poll => 'r', cb => sub { $inotify->poll }
     );
+}
+
+sub inotify {
+    $_[0]->{inotify};
+}
+
+## LOGGING
+
+our %LOGS = (
+    WATCH_DIR   , "watching %s",
+    UNWATCH_DIR , "unwatching %s",
+    FOUND_FILE  , "found %s",
+    KEEP_FILE   , "keep %s",
+    DELETE_FILE , "delete %s",
+    CATCH_ERROR , "error %s: %s",
+    WATCH_ERROR , "failed %s: %s",
+);
+
+sub _build_logger {
+    my ($logger) = @_;
+
+    if ( not defined $logger ) {
+        sub {
+            my (%args) = @_;
+            my $fh = $args{event} & HOTFOLDER_ERROR ? *STDERR : *STDOUT;
+            say $fh $args{message};
+        }
+    } elsif (blessed $logger && $logger->can('log')) {
+        sub {
+            my (%args) = @_;
+            $logger->log( 
+                level   => $args{event} & HOTFOLDER_ERROR ? 'error' : 'info',
+                message => $args{message}
+            );
+        }
+    } elsif (ref $logger // '' eq 'CODE') {
+        $logger;
+    } else {
+        croak "logger must be code or provide a log method!";
+    }
+}
+
+sub log {
+    my ($self, $event, $path, $error) = @_;
+    if ( $event & $self->{print} ) {
+        $self->{logger}->( 
+            event   => $event,
+            path    => $path,
+            message => sprintf($LOGS{$event}, $path, $event),
+        );
+    }
 }
 
 1;
@@ -178,7 +239,8 @@ File::Hotfolder - recursive watch directory for new or modified files
         },
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
-        print    => WATCH_DIR,          # show which directories are watched
+        print    => WATCH_DIR           # show which directories are watched
+                    | HOTFOLDER_ERROR,  # show all errors (CATCH_ERROR | WATCH_ERROR)
         catch    => sub {               # catch callback errors
             my ($path, $error) = @_;
             ...
@@ -191,6 +253,13 @@ File::Hotfolder - recursive watch directory for new or modified files
     # watch a given directory and delete all new or modified files
     watch( $ARGV[0] // '.', delete  => 1, print => DELETE_FILE )->loop;
 
+    # watch directory, delete all new/modified non-txt files, print all files
+    watch( '/some/directory',
+        callback => sub { $_[0] !~ /\.txt$/ },
+        delete  => 1,
+        print   => DELETE_FILE | KEEP_FILE
+    );
+    
 =head1 DESCRIPTION
 
 This module uses L<Linux::Inotify2> to recursively watch a directory for new or
@@ -205,21 +274,27 @@ be watched as well.
 
 =item watch
 
-Base directory to watch
+Base directory to watch. The C<WATCH_DIR> event is logged for each watched
+(sub)directory and the C<UNWATCH_DIR> event if directories are deleted. The
+C<WATCH_ERROR> event is logged if watching a directory failed and if the watch
+queue overflowed.
 
 =item callback
 
 Callback for each new or modified file. The callback is not called during a
-write but after a file has been closed.
+write but after a file has been closed. The C<FOUND_FILE> event is logged
+before executing the callback.
 
 =item delete
 
 Delete the modified file if a callback returned a true value (disabled by
-default).
+default). A C<DELETE_FILE> will be logged after deletion or a C<KEEP_FILE>
+event otherwise.
 
 =item fullname
 
-Return absolute path names (disabled by default).
+Return absolute path names. By default pathes are relative to the base
+directory given with option C<watch>.
 
 =item filter
 
@@ -227,21 +302,41 @@ Filter filenames with regular expression before passing to callback.
 
 =item print
 
-Print to STDOUT each new directory (C<WATCH_DIR>), each file path before
-callback execution (C<FOUND_FILE>), and/or each deletion (C<DELETE_FILE>).
-Also use C<CATCH_ERROR> (implying C<catch>) to print callback errors.
+Which events to log. Unless parameter C<logger> is specified, events are
+printed to STDOUT or STDERR. Possible event types are exported as constants
+C<WATCH_DIR>, C<UNWATCH_DIR>, C<FOUND_FILE>, C<DELETE_FILE>, C<KEEP_FILE>,
+C<CATCH_ERROR>, and C<WATCH_ERROR>. The constant C<HOTFOLDER_ERROR> combines
+C<CATCH_ERROR> and C<WATCH_ERROR> and the constant C<HOTFOLDER_ALL> combines
+all event types.
+
+=item logger
+
+Where to log events to. If given a code reference, the code is called with
+three named parameters:
+
+    logger => sub { # event => $event, path => $path, message => $message
+        my (%args) = @_;
+        ...
+    },
+
+If given an object instance a logging method is created and called at the
+object's C<log> method with argument C<level> and C<message> as expected by
+L<Log::Dispatch>:
+
+    logger => Log::Dispatch->new( ... ),
+
+The C<level> is set to C<error> for C<HOTFOLDER_ERROR> events and C<info> for
+other events.
 
 =item catch
 
-Error callback for failing callbacks. Disabled by default, so a dying callback
-will terminate the program.
+Error callback for failing callbacks (event C<CATCH_ERROR>). Disabled by
+default, so a dying callback will terminate the program. 
 
 =item scan
 
 First call the callback for all existing files. This does not guarantee that
 found files have been closed.
-
-=cut
 
 =back
 
@@ -257,15 +352,15 @@ Watch with L<AnyEvent>. Returns a new AnyEvent watch.
 
 =head2 inotify
 
-Returns the internal L<Linux::Inotify2> object.
+Returns the internal L<Linux::Inotify2> object. Future versions of this module
+may use another notify module (L<Win32::ChangeNotify>, L<Mac::FSEvents>,
+L<Filesys::Notify::KQueue>...), so this method may return C<undef>.
 
 =head1 SEE ALSO
 
-L<File::ChangeNotify>, L<Filesys::Notify::Simple>, L<AnyEvent::Inotify::Simple>
+L<File::ChangeNotify>, L<Filesys::Notify::Simple>
 
 L<AnyEvent>
-
-L<rrr-server> from L<File::Rsync::Mirror::Recent>
 
 =head1 COPYRIGHT AND LICENSE
 

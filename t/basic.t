@@ -1,10 +1,9 @@
 use strict;
 use warnings;
 use v5.10;
+
 use Test::More;
 use File::Temp qw(tempdir);
-use Time::HiRes qw(usleep);
-
 use File::Hotfolder;
 
 unless ($ENV{RELEASE_TESTING}) {
@@ -12,33 +11,36 @@ unless ($ENV{RELEASE_TESTING}) {
     exit;
 }
 
-#unless (eval { require 'AnyEvent.pm'; 1 }) {
-#    plan skip_all => 'skipped unless AnyEvent is installed';
-#    exit;
-#}
+sub touch($) {
+    my $f; open($f, '>', shift) ? close($f) : die "open: $!";
+}
 
 my $dir = tempdir( CLEANUP => 1 );
-mkdir "$dir/foo";
 
-my @queue;
+my (@queue, @logs);
 my $hf = File::Hotfolder->new(
     watch    => $dir,
     delete   => 1,
-    callback => sub { push @queue, @_; 1; }
+    print    => DELETE_FILE,
+    logger   => sub { push @logs, { @_ } },
+    callback => sub { push @queue, $_[0]; $_[0] =~ /b$/ ? 1 : die; },
+    catch    => 1,
 );
 $hf->inotify->blocking(0);
 
-sub touch($) {
-    open(my $f, '>', shift) || die "open: $!";
-    print $f 1;
-    close($f);
-}
-
 touch "$dir/a";
+$hf->inotify->poll;
+mkdir "$dir/foo"; 
+$hf->inotify->poll;
 touch "$dir/foo/b";
+$hf->inotify->poll;
 
-$hf->inotify->poll for 1..10;
+is_deeply \@queue, ["$dir/a","$dir/foo/b"], 'watch recursively';
 
-is_deeply \@queue, ["$dir/a","$dir/foo/b"];
+is_deeply \@logs, [ {
+        event   => DELETE_FILE,
+        path    => "$dir/foo/b",
+        message => "delete $dir/foo/b"
+    } ], 'log deletion';
 
 done_testing;
