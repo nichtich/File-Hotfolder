@@ -8,6 +8,7 @@ our $VERSION = '0.04';
 use Carp;
 use File::Find;
 use File::Spec;
+use File::Basename qw(basename);
 use Linux::Inotify2;
 use Scalar::Util qw(blessed);
 
@@ -47,15 +48,17 @@ sub new {
     croak "Missing watch directory: $path" unless -d $path,
 
     my $self = bless { 
-        inotify  => (Linux::Inotify2->new
-                    or croak "Unable to create new inotify object: $!"),
-        callback => ($args{callback} || sub { 1 }),
-        delete   => !!$args{delete},
-        print    => 0+($args{print} || 0),
-        filter   => $args{filter},
-        scan     => $args{scan},
-        catch    => _build_catch($args{catch}),
-        logger   => _build_logger($args{logger}),
+        inotify    => (Linux::Inotify2->new
+                      or croak "Unable to create new inotify object: $!"),
+        callback   => ($args{callback} || sub { 1 }),
+        delete     => !!$args{delete},
+        print      => 0+($args{print} || 0),
+        filter     => _build_filter($args{filter},
+                                    sub { $_[0] !~ qr{^(.*/)?\.[^/]*$} }),
+        filter_dir => _build_filter($args{filter_dir}, qr{^[^.]|^.$}), 
+        scan       => $args{scan},
+        catch      => _build_catch($args{catch}),
+        logger     => _build_logger($args{logger}),
     }, $class;
 
     $self->watch_recursive( $path );
@@ -69,10 +72,17 @@ sub _build_catch {
     return $catch ? sub { } : undef;
 }
 
+sub _build_filter {
+    my $filter = $_[0] // $_[1];
+    return unless $filter;
+    return sub { $_[0] =~ $filter } if ref $filter eq ref qr//;
+    $filter;
+}
+
 sub watch_recursive {
     my ($self, $path) = @_;
 
-    find({
+    my $args = {
         no_chdir => 1, 
         wanted => sub {
             if (-d $_) {
@@ -82,7 +92,16 @@ sub watch_recursive {
                 $self->_callback($_);
             }
         },
-    }, $path );
+    };
+
+    if ($self->{filter_dir}) {
+        return unless $self->{filter_dir}->(basename($path));
+        $args->{preprocess} = sub {
+            grep { $self->{filter_dir}->($_) } @_
+        };
+    }
+    
+    find( $args, $path );
 }
 
 sub _watch_directory {
@@ -121,7 +140,7 @@ sub _watch_directory {
 sub _callback {
     my ($self, $path) = @_;
 
-    if ($self->{filter} && $path !~ $self->{filter}) {
+    if ($self->{filter} && !$self->{filter}->($path)) {
         return;
     }
 
@@ -298,7 +317,14 @@ directory given with option C<watch>.
 
 =item filter
 
-Filter filenames with regular expression before passing to callback.
+Filter file pathes with regular expression or code reference before passing to
+callback. Set to ignore all hidden files (starting with a dot) by default.  Use
+C<0> to disable.
+
+=item filter_dir
+
+Filter directory names with regular expression before watching. Set to ignore
+hidden directories (starting with a dot) by default. Use C<0> to disable.
 
 =item print
 

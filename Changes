@@ -1,6 +1,7 @@
 # Change file for File::Hotfolder
 
 {{$NEXT}}
+    - improved filter and new option: filter_dir (issue #7)
     - extended logging
 
 0.03  2015-03-24 14:34:48 CET
