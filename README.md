@@ -21,7 +21,8 @@ File::Hotfolder - recursive watch directory for new or modified files
         },
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
-        print    => WATCH_DIR,          # show which directories are watched
+        print    => WATCH_DIR           # show which directories are watched
+                    | HOTFOLDER_ERROR,  # show all errors (CATCH_ERROR | WATCH_ERROR)
         catch    => sub {               # catch callback errors
             my ($path, $error) = @_;
             ...
@@ -33,6 +34,14 @@ File::Hotfolder - recursive watch directory for new or modified files
 
     # watch a given directory and delete all new or modified files
     watch( $ARGV[0] // '.', delete  => 1, print => DELETE_FILE )->loop;
+
+    # watch directory, delete all new/modified non-txt files, print all files
+    watch( '/some/directory',
+        callback => sub { $_[0] !~ /\.txt$/ },
+        delete  => 1,
+        print   => DELETE_FILE | KEEP_FILE
+    );
+    
 
 # DESCRIPTION
 
@@ -46,36 +55,71 @@ be watched as well.
 
 - watch
 
-    Base directory to watch
+    Base directory to watch. The `WATCH_DIR` event is logged for each watched
+    (sub)directory and the `UNWATCH_DIR` event if directories are deleted. The
+    `WATCH_ERROR` event is logged if watching a directory failed and if the watch
+    queue overflowed.
 
 - callback
 
     Callback for each new or modified file. The callback is not called during a
-    write but after a file has been closed.
+    write but after a file has been closed. The `FOUND_FILE` event is logged
+    before executing the callback.
 
 - delete
 
     Delete the modified file if a callback returned a true value (disabled by
-    default).
+    default). A `DELETE_FILE` will be logged after deletion or a `KEEP_FILE`
+    event otherwise.
 
 - fullname
 
-    Return absolute path names (disabled by default).
+    Return absolute path names. By default pathes are relative to the base
+    directory given with option `watch`.
 
 - filter
 
-    Filter filenames with regular expression before passing to callback.
+    Filter file pathes with regular expression or code reference before passing to
+    callback. Set to ignore all hidden files (starting with a dot) by default.  Use
+    `0` to disable.
+
+- filter\_dir
+
+    Filter directory names with regular expression before watching. Set to ignore
+    hidden directories (starting with a dot) by default. Use `0` to disable.
 
 - print
 
-    Print to STDOUT each new directory (`WATCH_DIR`), each file path before
-    callback execution (`FOUND_FILE`), and/or each deletion (`DELETE_FILE`).
-    Also use `CATCH_ERROR` (implying `catch`) to print callback errors.
+    Which events to log. Unless parameter `logger` is specified, events are
+    printed to STDOUT or STDERR. Possible event types are exported as constants
+    `WATCH_DIR`, `UNWATCH_DIR`, `FOUND_FILE`, `DELETE_FILE`, `KEEP_FILE`,
+    `CATCH_ERROR`, and `WATCH_ERROR`. The constant `HOTFOLDER_ERROR` combines
+    `CATCH_ERROR` and `WATCH_ERROR` and the constant `HOTFOLDER_ALL` combines
+    all event types.
+
+- logger
+
+    Where to log events to. If given a code reference, the code is called with
+    three named parameters:
+
+        logger => sub { # event => $event, path => $path, message => $message
+            my (%args) = @_;
+            ...
+        },
+
+    If given an object instance a logging method is created and called at the
+    object's `log` method with argument `level` and `message` as expected by
+    [Log::Dispatch](https://metacpan.org/pod/Log::Dispatch):
+
+        logger => Log::Dispatch->new( ... ),
+
+    The `level` is set to `error` for `HOTFOLDER_ERROR` events and `info` for
+    other events.
 
 - catch
 
-    Error callback for failing callbacks. Disabled by default, so a dying callback
-    will terminate the program.
+    Error callback for failing callbacks (event `CATCH_ERROR`). Disabled by
+    default, so a dying callback will terminate the program. 
 
 - scan
 
@@ -94,15 +138,15 @@ Watch with [AnyEvent](https://metacpan.org/pod/AnyEvent). Returns a new AnyEvent
 
 ## inotify
 
-Returns the internal [Linux::Inotify2](https://metacpan.org/pod/Linux::Inotify2) object.
+Returns the internal [Linux::Inotify2](https://metacpan.org/pod/Linux::Inotify2) object. Future versions of this module
+may use another notify module ([Win32::ChangeNotify](https://metacpan.org/pod/Win32::ChangeNotify), [Mac::FSEvents](https://metacpan.org/pod/Mac::FSEvents),
+[Filesys::Notify::KQueue](https://metacpan.org/pod/Filesys::Notify::KQueue)...), so this method may return `undef`.
 
 # SEE ALSO
 
-[File::ChangeNotify](https://metacpan.org/pod/File::ChangeNotify), [Filesys::Notify::Simple](https://metacpan.org/pod/Filesys::Notify::Simple), [AnyEvent::Inotify::Simple](https://metacpan.org/pod/AnyEvent::Inotify::Simple)
+[File::ChangeNotify](https://metacpan.org/pod/File::ChangeNotify), [Filesys::Notify::Simple](https://metacpan.org/pod/Filesys::Notify::Simple)
 
 [AnyEvent](https://metacpan.org/pod/AnyEvent)
-
-[rrr-server](https://metacpan.org/pod/rrr-server) from [File::Rsync::Mirror::Recent](https://metacpan.org/pod/File::Rsync::Mirror::Recent)
 
 # COPYRIGHT AND LICENSE
 
