@@ -52,6 +52,7 @@ sub new {
                       or croak "Unable to create new inotify object: $!"),
         callback   => ($args{callback} || sub { 1 }),
         delete     => !!$args{delete},
+        fork       => !!$args{fork},
         print      => 0+($args{print} || 0),
         filter     => _build_filter($args{filter},
                                     sub { $_[0] !~ qr{^(.*/)?\.[^/]*$} }),
@@ -144,6 +145,9 @@ sub _callback {
         return;
     }
 
+    my $fork = $self->{fork} ? fork : undef;
+    return if $fork; # parent
+
     $self->log( FOUND_FILE, $path );
     
     my $status;
@@ -164,6 +168,8 @@ sub _callback {
     } else {
         $self->log( KEEP_FILE, $path );
     }
+
+    exit if (defined $fork and !$fork); # child
 }
 
 sub loop {
@@ -256,6 +262,7 @@ File::Hotfolder - recursive watch directory for new or modified files
             my $path = shift;
             ...
         },
+        fork     => 0,                  # fork callback
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
         print    => WATCH_DIR           # show which directories are watched
@@ -279,6 +286,10 @@ File::Hotfolder - recursive watch directory for new or modified files
         print   => DELETE_FILE | KEEP_FILE
     );
     
+    # wait for events with AnyEvent
+    File::HotFolder->new( ... )->anyevent;
+    AnyEvent->condvar->recv;
+
 =head1 DESCRIPTION
 
 This module uses L<Linux::Inotify2> to recursively watch a directory for new or
@@ -326,14 +337,20 @@ C<0> to disable.
 Filter directory names with regular expression before watching. Set to ignore
 hidden directories (starting with a dot) by default. Use C<0> to disable.
 
+=item fork
+
+Execute callback in a child process by forking if possible.  Logging also takes
+place in the child process.
+
 =item print
 
-Which events to log. Unless parameter C<logger> is specified, events are
-printed to STDOUT or STDERR. Possible event types are exported as constants
-C<WATCH_DIR>, C<UNWATCH_DIR>, C<FOUND_FILE>, C<DELETE_FILE>, C<KEEP_FILE>,
-C<CATCH_ERROR>, and C<WATCH_ERROR>. The constant C<HOTFOLDER_ERROR> combines
-C<CATCH_ERROR> and C<WATCH_ERROR> and the constant C<HOTFOLDER_ALL> combines
-all event types.
+Log events to STDOUT and STDERR unless an explicit C<logger> is specified.
+
+This parameter expects a value with event types.  Possible event types are
+exported as constants C<WATCH_DIR>, C<UNWATCH_DIR>, C<FOUND_FILE>,
+C<DELETE_FILE>, C<KEEP_FILE>, C<CATCH_ERROR>, and C<WATCH_ERROR>. The constant
+C<HOTFOLDER_ERROR> combines C<CATCH_ERROR> and C<WATCH_ERROR> and the constant
+C<HOTFOLDER_ALL> combines all event types.
 
 =item logger
 
@@ -384,9 +401,17 @@ L<Filesys::Notify::KQueue>...), so this method may return C<undef>.
 
 =head1 SEE ALSO
 
+=over
+
+=item
+
 L<File::ChangeNotify>, L<Filesys::Notify::Simple>
 
+=item
+
 L<AnyEvent>
+
+=back
 
 =head1 COPYRIGHT AND LICENSE
 
