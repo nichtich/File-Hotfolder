@@ -19,6 +19,7 @@ File::Hotfolder - recursive watch directory for new or modified files
             my $path = shift;
             ...
         },
+        fork     => 0,                  # fork callback
         delete   => 1,                  # delete each file if callback returns true
         filter   => qr/\.json$/,        # only watch selected files
         print    => WATCH_DIR           # show which directories are watched
@@ -26,7 +27,8 @@ File::Hotfolder - recursive watch directory for new or modified files
         catch    => sub {               # catch callback errors
             my ($path, $error) = @_;
             ...
-        }
+        },
+        event_mask => IN_CLOSE          # filter event only to those of interest
     )->loop;
 
     # function interface
@@ -42,6 +44,9 @@ File::Hotfolder - recursive watch directory for new or modified files
         print   => DELETE_FILE | KEEP_FILE
     );
     
+    # wait for events with AnyEvent
+    File::HotFolder->new( ... )->anyevent;
+    AnyEvent->condvar->recv;
 
 # DESCRIPTION
 
@@ -72,6 +77,14 @@ be watched as well.
     default). A `DELETE_FILE` will be logged after deletion or a `KEEP_FILE`
     event otherwise.
 
+- event\_mask
+
+    React only to those event satisfying the mask. Can be any mask built of the
+    following Linux::Inotify2 event flags: `IN_CREATE`, `IN_CLOSE_WRITE`,
+    `IN_MOVE`, `IN_DELETE`, `IN_DELETE_SELF`, `IN_MOVE_SELF`.
+
+    Defaults to `IN_CLOSE_WRITE` | `IN_MOVED_TO`.
+
 - fullname
 
     Return absolute path names. By default pathes are relative to the base
@@ -88,14 +101,20 @@ be watched as well.
     Filter directory names with regular expression before watching. Set to ignore
     hidden directories (starting with a dot) by default. Use `0` to disable.
 
+- fork
+
+    Execute callback in a child process by forking if possible.  Logging also takes
+    place in the child process.
+
 - print
 
-    Which events to log. Unless parameter `logger` is specified, events are
-    printed to STDOUT or STDERR. Possible event types are exported as constants
-    `WATCH_DIR`, `UNWATCH_DIR`, `FOUND_FILE`, `DELETE_FILE`, `KEEP_FILE`,
-    `CATCH_ERROR`, and `WATCH_ERROR`. The constant `HOTFOLDER_ERROR` combines
-    `CATCH_ERROR` and `WATCH_ERROR` and the constant `HOTFOLDER_ALL` combines
-    all event types.
+    Log events to STDOUT and STDERR unless an explicit `logger` is specified.
+
+    This parameter expects a value with event types.  Possible event types are
+    exported as constants `WATCH_DIR`, `UNWATCH_DIR`, `FOUND_FILE`,
+    `DELETE_FILE`, `KEEP_FILE`, `CATCH_ERROR`, and `WATCH_ERROR`. The constant
+    `HOTFOLDER_ERROR` combines `CATCH_ERROR` and `WATCH_ERROR` and the constant
+    `HOTFOLDER_ALL` combines all event types.
 
 - logger
 
@@ -144,9 +163,8 @@ may use another notify module ([Win32::ChangeNotify](https://metacpan.org/pod/Wi
 
 # SEE ALSO
 
-[File::ChangeNotify](https://metacpan.org/pod/File::ChangeNotify), [Filesys::Notify::Simple](https://metacpan.org/pod/Filesys::Notify::Simple)
-
-[AnyEvent](https://metacpan.org/pod/AnyEvent)
+- [File::ChangeNotify](https://metacpan.org/pod/File::ChangeNotify), [Filesys::Notify::Simple](https://metacpan.org/pod/Filesys::Notify::Simple)
+- [AnyEvent](https://metacpan.org/pod/AnyEvent)
 
 # COPYRIGHT AND LICENSE
 

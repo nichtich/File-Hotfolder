@@ -1,9 +1,8 @@
 package File::Hotfolder;
-use strict;
 use warnings;
 use v5.10;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use Carp;
 use File::Find;
@@ -60,6 +59,7 @@ sub new {
         scan       => $args{scan},
         catch      => _build_catch($args{catch}),
         logger     => _build_logger($args{logger}),
+        event_mask => ($args{event_mask} || ( IN_CLOSE_WRITE | IN_MOVED_TO )),
     }, $class;
 
     $self->watch_recursive( $path, 1 );
@@ -128,7 +128,7 @@ sub _watch_directory {
                     $self->log( UNWATCH_DIR, $path );
                     $e->w->cancel;
                 }
-            } elsif ( $e->IN_CLOSE_WRITE || $e->IN_MOVED_TO ) {
+            } elsif ( $e->mask & $self->{event_mask} ) {
                 $self->_callback($path);
             }
 
@@ -195,8 +195,8 @@ our %LOGS = (
     FOUND_FILE  , "found %s",
     KEEP_FILE   , "keep %s",
     DELETE_FILE , "delete %s",
-    CATCH_ERROR , "error %s: %s",
-    WATCH_ERROR , "failed %s: %s",
+    CATCH_ERROR , "error %s",
+    WATCH_ERROR , "failed %s",
 );
 
 sub _build_logger {
@@ -229,7 +229,7 @@ sub log {
         $self->{logger}->( 
             event   => $event,
             path    => $path,
-            message => sprintf($LOGS{$event}, $path, $event),
+            message => sprintf($LOGS{$event}, $path),
         );
     }
 }
@@ -270,7 +270,8 @@ File::Hotfolder - recursive watch directory for new or modified files
         catch    => sub {               # catch callback errors
             my ($path, $error) = @_;
             ...
-        }
+        },
+        event_mask => IN_CLOSE          # filter event only to those of interest
     )->loop;
 
     # function interface
@@ -320,6 +321,14 @@ before executing the callback.
 Delete the modified file if a callback returned a true value (disabled by
 default). A C<DELETE_FILE> will be logged after deletion or a C<KEEP_FILE>
 event otherwise.
+
+=item event_mask
+
+React only to those event satisfying the mask. Can be any mask built of the
+following Linux::Inotify2 event flags: C<IN_CREATE>, C<IN_CLOSE_WRITE>,
+C<IN_MOVE>, C<IN_DELETE>, C<IN_DELETE_SELF>, C<IN_MOVE_SELF>.
+
+Defaults to C<IN_CLOSE_WRITE> | C<IN_MOVED_TO>.
 
 =item fullname
 
