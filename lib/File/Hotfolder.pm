@@ -62,7 +62,7 @@ sub new {
         logger     => _build_logger($args{logger}),
     }, $class;
 
-    $self->watch_recursive( $path );
+    $self->watch_recursive( $path, 1 );
 
     $self;
 }
@@ -81,14 +81,14 @@ sub _build_filter {
 }
 
 sub watch_recursive {
-    my ($self, $path) = @_;
+    my ($self, $path, $is_root) = @_;
 
     my $args = {
         no_chdir => 1, 
         wanted => sub {
             if (-d $_) {
                 $self->_watch_directory($_);
-            } elsif( $self->{scan} ) {
+            } elsif( !$is_root || $self->{scan} ) {
                 # TODO: check if not open or modified (lsof or fuser)
                 $self->_callback($_);
             }

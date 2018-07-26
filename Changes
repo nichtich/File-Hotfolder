@@ -2,7 +2,8 @@
 
 {{$NEXT}}
     - support forking (issue #6)
- 
+    - bugfix for new directory race
+
 0.04  2015-03-26 11:53:22 CET
     - improved filter and new option: filter_dir (issue #7)
     - extended logging
