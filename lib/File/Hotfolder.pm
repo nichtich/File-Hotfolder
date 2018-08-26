@@ -2,7 +2,7 @@ package File::Hotfolder;
 use warnings;
 use v5.10;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use Carp;
 use File::Find;
